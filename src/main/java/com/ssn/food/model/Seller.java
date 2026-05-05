@@ -5,12 +5,16 @@ import java.util.List;
 
 public class Seller {
     private static int counter = 1;
-    private final String id;
-    private String name, phone, address, avatarEmoji = "\uD83C\uDFAA", videoUrl = "";
+    private String id;
+    private String name, phone, address, avatarEmoji = "🎪", videoUrl = "";
     private double lat, lng;
     private final List<FoodItem> menu = new ArrayList<>();
     private double rating = 0;
     private int ratingCount = 0;
+
+    public void setId(String id) { this.id = id; }
+    public void setRating(double r) { this.rating = r; }
+    public void setRatingCount(int c) { this.ratingCount = c; }
 
     public Seller(String name, String phone, String address, double lat, double lng) {
         this.id = "S" + (counter++);
@@ -42,8 +46,8 @@ public class Seller {
         rating = (rating * ratingCount + stars) / (++ratingCount);
     }
     public String formatRating() {
-        return ratingCount == 0 ? "Belum ada rating"
-            : String.format("%.1f / 5.0  (%d ulasan)", rating, ratingCount);
+        return ratingCount == 0 ? "No ratings yet"
+            : String.format("%.1f / 5.0  (%d reviews)", rating, ratingCount);
     }
 
     public double distanceTo(double bLat, double bLng) {
@@ -53,5 +57,4 @@ public class Seller {
                  * Math.sin(dLng/2)*Math.sin(dLng/2);
         return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
     }
-
 }

@@ -17,33 +17,46 @@ import java.util.Comparator;
 import java.util.List;
 
 import javax.swing.BorderFactory;
-import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
-import javax.swing.JScrollBar;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
+import javax.swing.border.EmptyBorder;
 
 import com.ssn.food.model.ChatMsg;
 import com.ssn.food.model.FoodItem;
 import com.ssn.food.model.Seller;
 import com.ssn.food.service.AIService;
 import com.ssn.food.service.AppStore;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.function.BiConsumer;
 
 public class ChatPanel extends JPanel {
-    private final String sellerId;
-    private final ChatMsg.From myRole;
+    private String sellerId;
+    private ChatMsg.From myRole;
     private final JPanel msgs;
     private final JScrollPane scroll;
+    private BiConsumer<Integer, Integer> filterCallback;
     private boolean aiOn = false;
+    private String buyerName = "Buyer";
 
-    public ChatPanel(String sellerId, ChatMsg.From role) {
+    public void setFilterCallback(BiConsumer<Integer, Integer> cb) {
+        this.filterCallback = cb;
+    }
+
+    public void setBuyerName(String name) {
+        this.buyerName = (name == null || name.trim().isEmpty()) ? "Buyer" : name;
+    }
+
+    public ChatPanel(String sellerId, ChatMsg.From myRole, String buyerName) {
         this.sellerId = sellerId;
-        this.myRole = role;
+        this.myRole = myRole;
+        setBuyerName(buyerName);
         setLayout(new BorderLayout());
         setOpaque(false);
 
@@ -63,7 +76,7 @@ public class ChatPanel extends JPanel {
         JPanel row = new JPanel(new BorderLayout(6, 0));
         row.setOpaque(false);
         row.setBorder(BorderFactory.createEmptyBorder(6, 6, 6, 6));
-        JTextField inp = T.field("Ketik pesan...");
+        JTextField inp = T.field("Type a message...");
 
         JButton sendBtn = new JButton("\u25B6") {
             public void paintComponent(Graphics g) {
@@ -71,19 +84,15 @@ public class ChatPanel extends JPanel {
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
                 g2.setPaint(new GradientPaint(0, 0, T.PINK, getWidth(), getHeight(), T.PINK_D));
                 g2.fillOval(0, 0, getWidth(), getHeight());
-                g2.setColor(T.WHITE);
-                g2.setFont(T.f(13, Font.BOLD));
-                FontMetrics fm = g2.getFontMetrics();
-                g2.drawString(getText(), (getWidth() - fm.stringWidth(getText())) / 2 + 1,
-                        (getHeight() + fm.getAscent() - fm.getDescent()) / 2);
+                g2.setColor(Color.WHITE);
+                T.drawIcon(g2, "send", 10, 10, 15);
                 g2.dispose();
             }
         };
-        sendBtn.setPreferredSize(new Dimension(38, 38));
-        sendBtn.setOpaque(false);
+        sendBtn.setPreferredSize(new Dimension(35, 35));
+        sendBtn.setBorder(null);
         sendBtn.setContentAreaFilled(false);
-        sendBtn.setBorderPainted(false);
-        sendBtn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        sendBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
 
         Runnable send = () -> {
             String t = inp.getText().trim();
@@ -93,62 +102,121 @@ public class ChatPanel extends JPanel {
 
             String lowerT = t.toLowerCase();
 
-            // Filter menu dari termurah
-            if (lowerT.contains("murah") || lowerT.contains("termurah") || lowerT.contains("cheap")
-                    || lowerT.contains("harga murah")) {
+            // REGEX FILTER (Photo 1 Logic)
+            // Handle qty x price patterns (e.g., 3x21k, 3x21000)
+            Pattern p1 = Pattern.compile("(\\d+)x(\\d+)(k?)");
+            Matcher m1 = p1.matcher(lowerT);
+            if (m1.find() && filterCallback != null) {
+                int qty = Integer.parseInt(m1.group(1));
+                int price = Integer.parseInt(m1.group(2));
+                if (m1.group(3).equals("k") || price < 1000) price *= 1000;
+                
+                final int fPrice = price;
+                final int fQty = qty;
+
+                filterCallback.accept(price, qty);
+                
+                // Smart Tender Logic: Find best matching seller
+                List<Seller> matches = AppStore.get().getSellers().stream()
+                    .filter(s -> s.getMenu().stream().anyMatch(i -> i.getPrice() <= fPrice && i.getStock() >= fQty))
+                    .toList();
+                
+                String matchResult = matches.isEmpty() ? "No direct matches found." : "Found " + matches.size() + " smart matches!";
+                AppStore.get().sendChat(sellerId, new ChatMsg(ChatMsg.From.SYSTEM, 
+                    "Filter aktif: Maks " + AppStore.rp(price) + " | Min Stok: " + qty + "\n🤖 " + matchResult));
+                return;
+            }
+
+            // Handle budget patterns (e.g., 21k, 21000, Rp 21.000)
+            String budgetOnly = lowerT.replaceAll("[^\\dk]", ""); 
+            Pattern p2 = Pattern.compile("(\\d+)(k?)");
+            Matcher m2 = p2.matcher(budgetOnly);
+            if (m2.find() && filterCallback != null) {
+                int price = Integer.parseInt(m2.group(1));
+                if (m2.group(2).equals("k") || price < 1000) price *= 1000;
+                
+                filterCallback.accept(price, 0);
+                AppStore.get().sendChat(sellerId, new ChatMsg(ChatMsg.From.SYSTEM, 
+                    "Filter aktif: Budget Maks " + AppStore.rp(price)));
+                return;
+            }
+
+            // Reset filter if "reset" or "clear"
+            if (lowerT.equals("reset") || lowerT.equals("clear")) {
+                if (filterCallback != null) filterCallback.accept(-1, -1);
+                AppStore.get().sendChat(sellerId, new ChatMsg(ChatMsg.From.SYSTEM, "Filter cleared."));
+                return;
+            }
+
+            // Filter cheapest menu
+            if (lowerT.contains("cheap") || lowerT.contains("cheapest") || lowerT.contains("murah")) {
 
                 Seller seller = AppStore.get().findSeller(sellerId);
                 if (seller != null && !seller.getMenu().isEmpty()) {
                     List<FoodItem> sorted = new ArrayList<>(seller.getMenu());
                     sorted.sort(Comparator.comparingLong(FoodItem::getPrice));
 
-                    StringBuilder sb = new StringBuilder("🍽️ MENU DARI TERMURAH:\n\n");
-                    for (int i = 0; i < sorted.size(); i++) {
-                        FoodItem item = sorted.get(i);
-                        sb.append(i + 1).append(". ")
-                          .append(item.getEmoji()).append(" ")
-                          .append(item.getName()).append("\n")
-                          .append("   💰 Harga: ").append(item.formatPrice()).append("\n")
-                          .append("   📦 Stok: ").append(item.getStock()).append("\n\n");
+                    StringBuilder sb = new StringBuilder("Cheapest menu:\n");
+                    for (FoodItem item : sorted) {
+                        sb.append("  • ").append(item.getEmoji()).append(" ")
+                                .append(item.getName()).append(" - ")
+                                .append(item.formatPrice()).append("\n");
                     }
                     AppStore.get().sendChat(sellerId, new ChatMsg(ChatMsg.From.SYSTEM, sb.toString()));
                 } else {
                     AppStore.get().sendChat(sellerId,
-                            new ChatMsg(ChatMsg.From.SYSTEM, "⚠️ Belum ada menu tersedia."));
+                            new ChatMsg(ChatMsg.From.SYSTEM, "No menu available."));
                 }
                 return;
             }
 
-            // Filter menu termahal
-            if (lowerT.contains("mahal") || lowerT.contains("termahal") || lowerT.contains("expensive")) {
+            // Filter most expensive menu
+            if (lowerT.contains("expensive") || lowerT.contains("most expensive") || lowerT.contains("mahal")) {
                 Seller seller = AppStore.get().findSeller(sellerId);
                 if (seller != null && !seller.getMenu().isEmpty()) {
                     List<FoodItem> sorted = new ArrayList<>(seller.getMenu());
                     sorted.sort((a, b) -> Long.compare(b.getPrice(), a.getPrice()));
 
-                    StringBuilder sb = new StringBuilder("🍽️ MENU TERMAHAL:\n\n");
-                    for (int i = 0; i < Math.min(5, sorted.size()); i++) {
+                    StringBuilder sb = new StringBuilder("Most expensive menu:\n");
+                    for (int i = 0; i < Math.min(3, sorted.size()); i++) {
                         FoodItem item = sorted.get(i);
-                        sb.append(i + 1).append(". ")
-                          .append(item.getEmoji()).append(" ")
-                          .append(item.getName()).append("\n")
-                          .append("   💰 Harga: ").append(item.formatPrice()).append("\n\n");
+                        sb.append("  • ").append(item.getEmoji()).append(" ")
+                                .append(item.getName()).append(" - ")
+                                .append(item.formatPrice()).append("\n");
                     }
                     AppStore.get().sendChat(sellerId, new ChatMsg(ChatMsg.From.SYSTEM, sb.toString()));
                 }
                 return;
             }
 
-            // Chat normal
-            ChatMsg m = new ChatMsg(myRole, t);
-            AppStore.get().sendChat(sellerId, m);
+            // Advanced AI Flow (Concierge triggers)
+            String low = t.toLowerCase();
 
+            // 1. Send the original user message FIRST
+            ChatMsg userM = new ChatMsg(myRole, t);
+            AppStore.get().sendChat(sellerId, userM);
+
+            // 2. AI Triggers (Quick Replies)
+            if (low.matches(".*h[ae]ll+o.*") || low.contains("hi") || low.contains("halo") || low.contains("hey")) {
+                String nameToUse = (buyerName == null || buyerName.equals("Buyer")) ? "" : buyerName;
+                String greeting = "Hai " + (nameToUse.isEmpty() ? "Buyer" : nameToUse) + "! what u want to buy today? 🍱";
+                AppStore.get().sendChat(sellerId, new ChatMsg(ChatMsg.From.SYSTEM, "🤖 AI: " + greeting));
+            } else if (low.contains("spicy") || low.contains("pedas") || low.contains("hot") || low.contains("sambal")) {
+                // Message for Everyone (mainly Buyer)
+                AppStore.get().sendChat(sellerId, new ChatMsg(ChatMsg.From.SYSTEM, 
+                    "🤖 AI: OK " + (buyerName.equals("Buyer") ? "" : buyerName) + ", I'll find some spicy food for you!"));
+                
+                // Message for Sellers Only
+                AppStore.get().sendChat(sellerId, new ChatMsg(ChatMsg.From.SYSTEM, 
+                    "📢 ATTENTION SELLERS: Buyer wants SPICY food!"));
+            }
+
+            // 3. Original AI Logic (LLM Integration) - RESTORED & PRESERVED
             if (aiOn && myRole == ChatMsg.From.BUYER) {
-                AppStore.get().sendChat(sellerId,
-                        new ChatMsg(ChatMsg.From.SYSTEM, "🤖 AI sedang mengetik..."));
+                AppStore.get().sendChat(sellerId, new ChatMsg(ChatMsg.From.SYSTEM, "AI is typing..."));
                 AIService.ask(sellerId, t,
                         r -> AppStore.get().sendChat(sellerId, new ChatMsg(ChatMsg.From.AI, r)),
-                        e -> AppStore.get().sendChat(sellerId, new ChatMsg(ChatMsg.From.AI, "❌ " + e)));
+                        e -> AppStore.get().sendChat(sellerId, new ChatMsg(ChatMsg.From.AI, "Error: " + e)));
             }
         };
 
@@ -169,145 +237,75 @@ public class ChatPanel extends JPanel {
     private void refresh() {
         List<ChatMsg> list = AppStore.get().getChat(sellerId);
         msgs.removeAll();
-        
-        msgs.add(Box.createVerticalStrut(4));
-        
         for (ChatMsg m : list) {
-            JPanel bubblePanel = bubble(m);
-            bubblePanel.setMaximumSize(new Dimension(Integer.MAX_VALUE, Integer.MAX_VALUE));
-            msgs.add(bubblePanel);
-            msgs.add(Box.createVerticalStrut(8));
+            // Hide specific system alerts from Buyer
+            if (myRole == ChatMsg.From.BUYER && m.text.startsWith("📢 ATTENTION SELLERS")) {
+                continue;
+            }
+            msgs.add(bubble(m));
         }
-        
-        msgs.add(Box.createVerticalStrut(4));
         msgs.revalidate();
         msgs.repaint();
-        
-        SwingUtilities.invokeLater(() -> {
-            JScrollBar vertical = scroll.getVerticalScrollBar();
-            vertical.setValue(vertical.getMaximum());
-        });
+        SwingUtilities.invokeLater(() -> scroll.getVerticalScrollBar()
+                .setValue(scroll.getVerticalScrollBar().getMaximum()));
     }
 
-    // Bubble chat yang rapi dan tidak kepotong
     private JPanel bubble(ChatMsg m) {
         boolean mine = m.from == myRole;
         boolean isAI = m.from == ChatMsg.From.AI;
         boolean isSys = m.from == ChatMsg.From.SYSTEM;
 
-        // Container utama
-        JPanel container = new JPanel();
-        container.setLayout(new BoxLayout(container, BoxLayout.Y_AXIS));
-        container.setOpaque(false);
-        
-        // Warna berbeda untuk setiap role
-        Color bgColor;
-        Color textColor;
-        String prefix = "";
-        String roleName = "";
-        
-        if (isAI) {
-            bgColor = new Color(235, 245, 255);
-            textColor = new Color(25, 85, 150);
-            prefix = "🤖 ";
-            roleName = "AI Assistant";
-        } else if (isSys) {
-            bgColor = new Color(240, 248, 235);
-            textColor = new Color(40, 100, 60);
-            prefix = "ℹ️ ";
-            roleName = "System";
-        } else if (mine) {
-            bgColor = new Color(255, 220, 230);
-            textColor = new Color(180, 40, 90);
-        } else {
-            bgColor = new Color(245, 245, 250);
-            textColor = new Color(50, 50, 70);
-        }
-        
-        // Header untuk AI/System
-        if (isAI || isSys) {
-            JPanel header = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
-            header.setOpaque(false);
-            JLabel roleLabel = new JLabel(roleName);
-            roleLabel.setFont(T.f(9, Font.BOLD));
-            roleLabel.setForeground(textColor);
-            roleLabel.setBorder(BorderFactory.createEmptyBorder(0, 8, 2, 0));
-            header.add(roleLabel);
-            container.add(header);
-        }
-        
-        // Bubble panel
-        JPanel bubblePanel = new JPanel() {
+        int align = isSys ? FlowLayout.CENTER : (mine ? FlowLayout.RIGHT : FlowLayout.LEFT);
+        JPanel row = new JPanel(new FlowLayout(align, 5, 2));
+        row.setOpaque(false);
+        row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 1000));
+
+        final Color bg = mine ? T.PINK : (isAI ? new Color(245, 243, 255) : Color.WHITE);
+        Color fg = mine ? Color.WHITE : T.DARK;
+        if (isSys) { fg = T.GRAY; }
+        final Color fBg = isSys ? new Color(243, 244, 246) : bg;
+
+        JLabel lbl = new JLabel("<html><body style='width: 180px; padding: 2px;'>" + 
+            (isAI ? "<b>🤖 AI:</b><br>" : "") + m.text + "</body></html>");
+        lbl.setFont(T.FS);
+        lbl.setForeground(fg);
+
+        JPanel bub = new JPanel(new BorderLayout()) {
             public void paintComponent(Graphics g) {
                 Graphics2D g2 = (Graphics2D) g.create();
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                g2.setColor(bgColor);
-                g2.fillRoundRect(0, 0, getWidth(), getHeight(), 18, 18);
-                g2.setColor(textColor);
-                g2.setStroke(new BasicStroke(1f));
-                g2.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 18, 18);
+                g2.setColor(new Color(0,0,0,10)); // Shadow
+                g2.fillRoundRect(1, 1, getWidth()-1, getHeight()-1, 15, 15);
+                g2.setColor(fBg);
+                g2.fillRoundRect(0, 0, getWidth()-1, getHeight()-1, 15, 15);
+                
+                if (!isSys) {
+                    int[] tx, ty;
+                    if (mine) {
+                        tx = new int[]{getWidth()-1, getWidth()-1, getWidth()+4};
+                        ty = new int[]{5, 15, 5};
+                    } else {
+                        tx = new int[]{0, 0, -4};
+                        ty = new int[]{5, 15, 5};
+                    }
+                    g2.fillPolygon(tx, ty, 3);
+                }
                 g2.dispose();
             }
         };
-        bubblePanel.setLayout(new BorderLayout());
-        bubblePanel.setOpaque(false);
-        
-        // Text area untuk pesan
-        JTextArea ta = new JTextArea();
-        String displayText = prefix + m.text;
-        ta.setText(displayText);
-        ta.setLineWrap(true);
-        ta.setWrapStyleWord(true);
-        ta.setOpaque(false);
-        ta.setEditable(false);
-        ta.setFocusable(false);
-        ta.setForeground(textColor);
-        
-        // Atur font berdasarkan panjang teks
-        if (displayText.length() > 150) {
-            ta.setFont(new Font("Segoe UI", Font.PLAIN, 11));
-        } else if (isAI) {
-            ta.setFont(new Font("Segoe UI", Font.ITALIC, 12));
-        } else {
-            ta.setFont(T.FB);
-        }
-        
-        // Hitung ukuran yang tepat
-        int textWidth = ta.getPreferredSize().width;
-        int maxWidth = 400;
-        
-        if (displayText.length() > 200) {
-            maxWidth = 500;
-        } else if (displayText.length() > 100) {
-            maxWidth = 450;
-        }
-        
-        int finalWidth = Math.min(Math.max(textWidth + 40, 120), maxWidth);
-        int textHeight = ta.getPreferredSize().height;
-        ta.setPreferredSize(new Dimension(finalWidth - 20, textHeight));
-        
-        bubblePanel.add(ta, BorderLayout.CENTER);
-        bubblePanel.setBorder(BorderFactory.createEmptyBorder(10, 14, 10, 14));
-        bubblePanel.setMaximumSize(new Dimension(maxWidth + 20, Integer.MAX_VALUE));
-        
-        // Time stamp
-        JPanel footer = new JPanel(new FlowLayout(mine ? FlowLayout.RIGHT : FlowLayout.LEFT, 0, 0));
-        footer.setOpaque(false);
-        JLabel timeLabel = new JLabel(m.time);
-        timeLabel.setFont(T.f(9, Font.PLAIN));
-        timeLabel.setForeground(new Color(150, 150, 150));
-        timeLabel.setBorder(BorderFactory.createEmptyBorder(2, 8, 0, 8));
-        footer.add(timeLabel);
-        
-        container.add(bubblePanel);
-        container.add(footer);
-        
-        // Alignment wrapper
-        JPanel wrapper = new JPanel();
-        wrapper.setLayout(new FlowLayout(mine ? FlowLayout.RIGHT : FlowLayout.LEFT, 5, 2));
-        wrapper.setOpaque(false);
-        wrapper.add(container);
-        
-        return wrapper;
+        bub.setOpaque(false);
+        bub.setBorder(new EmptyBorder(5, 10, 5, 10));
+        bub.add(lbl, BorderLayout.CENTER);
+
+        JLabel timeLbl = new JLabel(m.time);
+        timeLbl.setFont(T.FX);
+        timeLbl.setForeground(mine ? new Color(255,255,255,160) : Color.LIGHT_GRAY);
+        JPanel tp = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+        tp.setOpaque(false);
+        tp.add(timeLbl);
+        bub.add(tp, BorderLayout.SOUTH);
+
+        row.add(bub);
+        return row;
     }
 }

@@ -8,9 +8,15 @@ public class ChatMsg {
     public final From   from;
     public final String text;
     public final String time;
+    public String sellerId; // Context ID
 
     public ChatMsg(From from, String text) {
         this.from = from; this.text = text;
         this.time = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"));
+    }
+    
+    public ChatMsg(From from, String text, String sellerId) {
+        this(from, text);
+        this.sellerId = sellerId;
     }
 }

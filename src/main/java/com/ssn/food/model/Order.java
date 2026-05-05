@@ -29,7 +29,7 @@ public class Order {
         this.buyerAddress = buyerAddress; this.sellerId = sellerId;
         this.payment = payment;
         this.timestamp = LocalDateTime.now()
-            .format(DateTimeFormatter.ofPattern("dd/MM HH:mm"));
+            .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
     }
 
     public void addLine(FoodItem item, int qty) { lines.add(new Line(item, qty)); }

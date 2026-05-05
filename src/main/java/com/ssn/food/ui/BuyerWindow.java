@@ -1,8 +1,10 @@
 package com.ssn.food.ui;
 
 import java.awt.BorderLayout;
+import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Component;
+import java.awt.Cursor;
 import java.awt.Desktop;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
@@ -11,6 +13,7 @@ import java.awt.FontMetrics;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.GridLayout;
+import java.awt.GridBagLayout;
 import java.awt.RenderingHints;
 import java.net.URI;
 import java.util.ArrayList;
@@ -31,6 +34,7 @@ import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JSpinner;
 import javax.swing.JSplitPane;
+import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.SpinnerNumberModel;
 import javax.swing.SwingConstants;
@@ -46,6 +50,7 @@ import com.ssn.food.model.Order;
 import com.ssn.food.model.Seller;
 import com.ssn.food.service.AIService;
 import com.ssn.food.service.AppStore;
+import com.ssn.food.service.DatabaseManager;
 
 public class BuyerWindow extends JFrame {
 
@@ -55,8 +60,10 @@ public class BuyerWindow extends JFrame {
     private final JLabel locLbl;
     private String activeSellerId = null;
     private final JPanel chatHolder;
+    private int currentMaxPrice = -1;
+    private int currentMinQty = -1;
 
-    // Poin 5: Cart system
+    // Cart system
     private static class CartItem {
         FoodItem item;
         int qty;
@@ -78,7 +85,7 @@ public class BuyerWindow extends JFrame {
     private JButton cartBtn;
 
     public BuyerWindow() {
-        setTitle("\uD83D\uDED2 Buyer Dashboard  \u2014  SSN FoodApp");
+        setTitle("Buyer Dashboard — SSN FoodApp");
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setMinimumSize(new Dimension(700, 500));
         setExtendedState(JFrame.MAXIMIZED_BOTH);
@@ -98,11 +105,14 @@ public class BuyerWindow extends JFrame {
         chatHolder.setOpaque(false);
         chatHolder.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 6));
         JLabel chatHint = new JLabel(
-                "<html><center>\uD83D\uDC46 Klik Chat pada seller<br>untuk mulai obrolan</center></html>",
+                "<html><center>Broadcast your request here!<br>Sellers will respond with offers.</center></html>",
                 SwingConstants.CENTER);
         chatHint.setFont(T.FB);
         chatHint.setForeground(T.GRAY);
         chatHolder.add(chatHint, BorderLayout.CENTER);
+
+        // Auto-open Broadcast chat
+        openChat(null); // special case for broadcast
 
         // RIGHT — seller list
         JPanel rightPanel = new JPanel(new BorderLayout());
@@ -112,19 +122,20 @@ public class BuyerWindow extends JFrame {
         JPanel rhdr = new JPanel(new BorderLayout(10, 0));
         rhdr.setOpaque(false);
         rhdr.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
-        locLbl = new JLabel("\uD83D\uDCCD Jakarta  \u2022  5 Seller Ditemukan");
-        locLbl.setFont(T.FS);
-        locLbl.setForeground(T.GRAY);
+        locLbl = new JLabel("📍 Detecting Location...");
+        locLbl.setFont(T.FBO); locLbl.setForeground(T.PINK_D);
+        
+        AppStore.get().onReview(() -> SwingUtilities.invokeLater(() -> rebuildSellerList(AppStore.get().getSellers())));
 
         JPanel sortRow = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
         sortRow.setOpaque(false);
-        JButton nearBtn = T.btn("\uD83D\uDCCD Terdekat", new Color(16, 185, 129), new Color(5, 150, 105));
+        JButton nearBtn = T.btn("Nearest", new Color(16, 185, 129), new Color(5, 150, 105));
         nearBtn.addActionListener(e -> sortByDist());
-        JButton cheapBtn = T.btn("\uD83D\uDCB0 Termurah", new Color(234, 88, 12), new Color(194, 65, 12));
+        JButton cheapBtn = T.btn("Cheapest", new Color(234, 88, 12), new Color(194, 65, 12));
         cheapBtn.addActionListener(e -> sortByCheap());
-        JButton topBtn = T.btn("\u2B50 Terpopuler", new Color(139, 92, 246), new Color(109, 40, 217));
+        JButton topBtn = T.btn("Top Rated", new Color(139, 92, 246), new Color(109, 40, 217));
         topBtn.addActionListener(e -> sortByRating());
-        JButton histBtn = T.obtn("\uD83D\uDCB3 Riwayat", T.PINK_D);
+        JButton histBtn = T.obtn("History", T.PINK_D);
         histBtn.addActionListener(e -> showHistory());
         sortRow.add(nearBtn);
         sortRow.add(cheapBtn);
@@ -149,12 +160,45 @@ public class BuyerWindow extends JFrame {
         mainSplit.setRightComponent(rightPanel);
         root.add(mainSplit, BorderLayout.CENTER);
 
+        // Database Status Bar
+        JPanel statusBar = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 3));
+        statusBar.setBackground(new Color(245, 245, 245));
+        statusBar.setBorder(new MatteBorder(1, 0, 0, 0, new Color(220, 220, 220)));
+        boolean connected = DatabaseManager.get().isConnected();
+        JLabel dbStatus = new JLabel(connected ? "🟢 Database: Connected" : "🔴 Database: Disconnected (Check XAMPP)");
+        dbStatus.setFont(T.f(10, Font.PLAIN));
+        dbStatus.setForeground(connected ? new Color(21, 128, 61) : Color.RED);
+        statusBar.add(dbStatus);
+        root.add(statusBar, BorderLayout.SOUTH);
+
         setContentPane(root);
+        
+        // Initialize seller list after components are ready
         rebuildSellerList(AppStore.get().getSellers());
-        AppStore.get().onMenu(s -> SwingUtilities.invokeLater(() -> rebuildSellerList(AppStore.get().getSellers())));
+        AppStore.get().onMenu(s -> SwingUtilities.invokeLater(() -> 
+            rebuildSellerList(AppStore.get().getSellers(), currentMaxPrice, currentMinQty)));
+        
+        // Removed old rebuild calls to avoid duplication with above onMenu listener
+        
+        // Notification for personal messages
+        AppStore.get().onChat(m -> {
+            if (m.from == ChatMsg.From.SELLER) {
+                SwingUtilities.invokeLater(() -> {
+                    Seller s = AppStore.get().findSeller(m.sellerId);
+                    String name = (s != null) ? s.getName() : "Seller";
+                    if (!m.sellerId.equals(activeSellerId)) {
+                         JOptionPane.showMessageDialog(this, 
+                             "<html><b>New Message from " + name + ":</b><br>" + m.text + "</html>",
+                             "New Message", JOptionPane.INFORMATION_MESSAGE);
+                    }
+                });
+            }
+        });
     }
 
-    // ── Top bar ───────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────
+    // TOP BAR
+    // ─────────────────────────────────────────────────────────────────────
     private JPanel topBar() {
         JPanel bar = new JPanel(new BorderLayout(10, 0));
         bar.setOpaque(false);
@@ -165,53 +209,63 @@ public class BuyerWindow extends JFrame {
         // Logo + title
         JPanel title = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         title.setOpaque(false);
-        JLabel logo = new JLabel("\uD83D\uDED2");
-        logo.setFont(T.f(26, Font.PLAIN));
         JLabel name = new JLabel("Buyer Dashboard");
         name.setFont(T.FT);
         name.setForeground(T.PINK_D);
-        title.add(logo);
         title.add(name);
 
         // Profile fields
         JPanel pf = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
         pf.setOpaque(false);
 
-        nameF = T.field("Nama");
+        nameF = T.field("Name");
         nameF.setPreferredSize(new Dimension(110, 30));
         phoneF = T.field("08xx...");
         phoneF.setPreferredSize(new Dimension(120, 30));
-        addrF = T.field("Alamat");
+        addrF = T.field("Address");
         addrF.setPreferredSize(new Dimension(200, 30));
 
-        JButton save = T.btn("\uD83D\uDCBE Simpan");
+        JButton save = T.btn("Save");
         save.addActionListener(e -> {
-            buyer.setName(nameF.getText().trim());
+            String nameVal = nameF.getText().trim();
+            String addrVal = addrF.getText().trim();
+            if (nameVal.isEmpty() || addrVal.isEmpty()) {
+                JOptionPane.showMessageDialog(this, "Please fill both Name and Address to activate your profile!", "Profile Incomplete", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            buyer.setName(nameVal);
             buyer.setPhone(phoneF.getText().trim());
-            buyer.setAddress(addrF.getText().trim());
-            locLbl.setText("\uD83D\uDCCD " + (addrF.getText().isEmpty() ? "Jakarta" : addrF.getText()));
-            JOptionPane.showMessageDialog(this, "Profil disimpan!", "OK", JOptionPane.INFORMATION_MESSAGE);
+            buyer.setAddress(addrVal);
+            locLbl.setText("📍 " + buyer.getAddress());
+            
+            // Refresh current chat name if open
+            if (activeSellerId != null) {
+                if (activeSellerId.equals(AppStore.BROADCAST_ID)) {
+                    openChat(null);
+                } else {
+                    openChat(AppStore.get().findSeller(activeSellerId));
+                }
+            }
+
+            JOptionPane.showMessageDialog(this, "Profile saved and activated!", "OK", JOptionPane.INFORMATION_MESSAGE);
         });
 
-        JButton aiBtn = T.btn("\uD83E\uDD16 Tanya AI", new Color(124, 58, 237), new Color(91, 33, 182));
+        JButton aiBtn = T.btn("Ask AI", new Color(124, 58, 237), new Color(91, 33, 182));
         aiBtn.addActionListener(e -> openAIDialog());
 
-        JButton mapBtn = T.obtn("\uD83D\uDDFA Peta Saya", T.PINK);
-        mapBtn.addActionListener(e -> openMap(buyer.getLat(), buyer.getLng()));
-
-        // Poin 5: Tombol keranjang
-        cartBtn = T.btn("🛒 Keranjang (0)", new Color(234, 88, 12), new Color(194, 65, 12));
+        // Cart button
+        cartBtn = T.btn("Cart (0)", new Color(234, 88, 12), new Color(194, 65, 12));
         cartBtn.addActionListener(e -> showCart());
 
-        addLbl(pf, "\uD83D\uDC64");
+        addLbl(pf, "Name:");
         pf.add(nameF);
-        addLbl(pf, "\uD83D\uDCF1");
+        addLbl(pf, "Phone:");
         pf.add(phoneF);
-        addLbl(pf, "\uD83D\uDCCD");
+        addLbl(pf, "Addr:");
         pf.add(addrF);
         pf.add(save);
         pf.add(aiBtn);
-        pf.add(mapBtn);
+
         pf.add(cartBtn);
 
         bar.add(title, BorderLayout.WEST);
@@ -227,14 +281,16 @@ public class BuyerWindow extends JFrame {
 
     private void updateCartButton() {
         if (cartBtn != null) {
-            cartBtn.setText("🛒 Keranjang (" + cart.size() + ")");
+            cartBtn.setText("Cart (" + cart.size() + ")");
         }
     }
 
-    // Poin 5: Show cart dialog
+    // ─────────────────────────────────────────────────────────────────────
+    // SHOPPING CART
+    // ─────────────────────────────────────────────────────────────────────
     private void showCart() {
         if (cartDialog == null || !cartDialog.isVisible()) {
-            cartDialog = new JDialog(this, "🛒 Keranjang Belanja", true);
+            cartDialog = new JDialog(this, "Shopping Cart", true);
             cartDialog.setSize(400, 500);
             cartDialog.setLocationRelativeTo(this);
         }
@@ -243,11 +299,18 @@ public class BuyerWindow extends JFrame {
         main.setLayout(new BorderLayout());
         main.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
 
-        JLabel title = new JLabel("🛒 Keranjang Belanja");
-        title.setFont(T.FT);
-        title.setForeground(T.PINK_D);
-        title.setBorder(BorderFactory.createEmptyBorder(0, 0, 10, 0));
-        main.add(title, BorderLayout.NORTH);
+        // Header Invoice
+        JPanel header = new JPanel(new GridLayout(2, 1));
+        header.setOpaque(false);
+        JLabel title = new JLabel("OFFICIAL INVOICE", SwingConstants.CENTER);
+        title.setFont(T.FT); title.setForeground(T.PINK_D);
+        JLabel sub = new JLabel("SSN FoodApp Pro • Market Receipt", SwingConstants.CENTER);
+        sub.setFont(T.FX); sub.setForeground(T.GRAY);
+        header.add(title); header.add(sub);
+        header.setBorder(BorderFactory.createCompoundBorder(
+            new MatteBorder(0, 0, 2, 0, T.PINK_D), 
+            BorderFactory.createEmptyBorder(10, 0, 15, 0)));
+        main.add(header, BorderLayout.NORTH);
 
         JPanel itemsPanel = new JPanel();
         itemsPanel.setLayout(new BoxLayout(itemsPanel, BoxLayout.Y_AXIS));
@@ -255,35 +318,68 @@ public class BuyerWindow extends JFrame {
 
         long grandTotal = 0;
         for (CartItem ci : cart) {
-            JPanel row = T.card(8);
-            row.setLayout(new BorderLayout(8, 0));
-            row.setBorder(BorderFactory.createEmptyBorder(8, 10, 8, 10));
-            row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 60));
+            JPanel row = new JPanel(new BorderLayout(15, 0));
+            row.setOpaque(false);
+            row.setBorder(new CompoundBorder(
+                new MatteBorder(0, 0, 1, 0, new Color(230, 230, 230)), 
+                new EmptyBorder(12, 10, 12, 10)));
+            
+            JLabel icon = new JLabel() {
+                public void paintComponent(Graphics g) {
+                    Graphics2D g2 = (Graphics2D) g.create();
+                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                    g2.setColor(new Color(245, 245, 245)); g2.fillOval(0, 0, 34, 34);
+                    g2.setColor(T.PINK_B); T.drawIcon(g2, "food", 7, 7, 20);
+                    g2.dispose();
+                }
+            };
+            icon.setPreferredSize(new Dimension(34, 34));
+            
+            JLabel nameLabel = new JLabel("<html><b style='font-size:11px;'>" + ci.item.getName().toUpperCase() + "</b><br><font color='#777777'>Quantity: " + ci.qty + "</font></html>");
+            nameLabel.setFont(T.FS);
+            
+            JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT, 12, 0));
+            left.setOpaque(false);
+            left.add(icon); left.add(nameLabel);
 
-            JLabel name = new JLabel(ci.item.getEmoji() + " " + ci.item.getName() + " x" + ci.qty);
-            name.setFont(T.FB);
+            JLabel priceLabel = new JLabel(AppStore.rp(ci.getSubtotal()));
+            priceLabel.setFont(T.FBO); priceLabel.setForeground(T.DARK);
 
-            JLabel price = new JLabel(ci.item.formatPrice() + " = " + AppStore.rp(ci.getSubtotal()));
-            price.setFont(T.FBO);
-            price.setForeground(T.PINK_D);
-
-            JButton remove = T.obtn("✖", T.GRAY);
-            remove.addActionListener(e -> {
+            JButton removeBtn = new JButton("✕");
+            removeBtn.setFont(T.f(11, Font.BOLD)); removeBtn.setForeground(new Color(200, 200, 200));
+            removeBtn.setBorder(null); removeBtn.setContentAreaFilled(false);
+            removeBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
+            removeBtn.addActionListener(e -> {
                 cart.remove(ci);
-                updateCartButton();
+                cartDialog.setVisible(false);
                 showCart();
+                updateCartButton();
             });
 
-            row.add(remove, BorderLayout.WEST);
-            row.add(name, BorderLayout.CENTER);
-            row.add(price, BorderLayout.EAST);
+            row.add(removeBtn, BorderLayout.WEST);
+            row.add(left, BorderLayout.CENTER);
+            row.add(priceLabel, BorderLayout.EAST);
             itemsPanel.add(row);
-            itemsPanel.add(Box.createVerticalStrut(5));
             grandTotal += ci.getSubtotal();
         }
 
+        // Receipt-style Footer Separator
+        JPanel dashPanel = new JPanel() {
+            public void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setColor(new Color(200, 200, 200));
+                float[] dash = {5f, 5f};
+                g2.setStroke(new BasicStroke(1, BasicStroke.CAP_BUTT, BasicStroke.JOIN_BEVEL, 10, dash, 0));
+                g2.drawLine(0, 5, getWidth(), 5);
+                g2.dispose();
+            }
+        };
+        dashPanel.setPreferredSize(new Dimension(100, 10));
+        dashPanel.setOpaque(false);
+        itemsPanel.add(dashPanel);
+
         if (cart.isEmpty()) {
-            JLabel empty = new JLabel("🛒 Keranjang kosong", SwingConstants.CENTER);
+            JLabel empty = new JLabel("Cart is empty", SwingConstants.CENTER);
             empty.setFont(T.FB);
             empty.setForeground(T.GRAY);
             itemsPanel.add(empty);
@@ -305,30 +401,55 @@ public class BuyerWindow extends JFrame {
         JPanel btns = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         btns.setOpaque(false);
 
-        JButton closeBtn = T.obtn("Tutup", T.GRAY);
+        JButton closeBtn = T.obtn("Close", T.GRAY);
         closeBtn.addActionListener(e -> cartDialog.setVisible(false));
 
-        JButton checkoutBtn = T.btn("✅ Checkout");
-        checkoutBtn.addActionListener(e -> {
-            if (cart.isEmpty()) {
-                JOptionPane.showMessageDialog(cartDialog, "Keranjang kosong!", "Info", JOptionPane.WARNING_MESSAGE);
-                return;
-            }
-            checkoutCart();
-            cartDialog.setVisible(false);
-        });
-
+        JButton checkoutBtn = T.btn("Checkout");
+        
         btns.add(closeBtn);
         btns.add(checkoutBtn);
         footer.add(totalLabel, BorderLayout.WEST);
         footer.add(btns, BorderLayout.EAST);
-        main.add(footer, BorderLayout.SOUTH);
+        
+        // Payment choice
+        JPanel payRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+        payRow.setOpaque(false);
+        payRow.setBorder(BorderFactory.createEmptyBorder(12, 0, 12, 0));
+        JLabel payLbl = new JLabel("Payment Method:");
+        payLbl.setFont(T.FBO);
+        payRow.add(payLbl);
+        javax.swing.JComboBox<Order.Payment> payCombo = new javax.swing.JComboBox<>(Order.Payment.values());
+        payCombo.setFont(T.FBO);
+        payCombo.setPreferredSize(new Dimension(150, 35));
+        payRow.add(payCombo);
+        
+        JPanel footWrap = new JPanel(new BorderLayout());
+        footWrap.setOpaque(false);
+        footWrap.add(payRow, BorderLayout.NORTH);
+        footWrap.add(footer, BorderLayout.CENTER);
+        
+        main.add(footWrap, BorderLayout.SOUTH);
+
+        checkoutBtn.addActionListener(e -> {
+            if (buyer.getName().isEmpty()) {
+                JOptionPane.showMessageDialog(cartDialog, 
+                    "Please fill and Save your Name in the Profile bar at the top first!", 
+                    "Profile Required", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            if (cart.isEmpty()) {
+                JOptionPane.showMessageDialog(cartDialog, "Cart is empty!", "Info", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            checkoutCart((Order.Payment)payCombo.getSelectedItem());
+            cartDialog.setVisible(false);
+        });
 
         cartDialog.setContentPane(main);
         cartDialog.setVisible(true);
     }
 
-    private void checkoutCart() {
+    private void checkoutCart(Order.Payment payment) {
         if (cart.isEmpty())
             return;
 
@@ -341,9 +462,8 @@ public class BuyerWindow extends JFrame {
             Seller seller = entry.getKey();
             List<CartItem> items = entry.getValue();
 
-            Order.Payment pay = Order.Payment.CASH;
             Order order = new Order(buyer.getDisplayName(), buyer.getPhone(),
-                    buyer.getAddress(), seller.getId(), pay);
+                    buyer.getAddress(), seller.getId(), payment);
 
             StringBuilder summary = new StringBuilder();
             long total = 0;
@@ -356,25 +476,64 @@ public class BuyerWindow extends JFrame {
 
             AppStore.get().placeOrder(order);
             AppStore.get().sendChat(seller.getId(), new ChatMsg(ChatMsg.From.SYSTEM,
-                    "🛒 Order baru dari " + buyer.getDisplayName() + ": " + summary.toString() +
+                    "New order from " + buyer.getDisplayName() + ": " + summary.toString() +
                             " | Total: " + AppStore.rp(total)));
             AppStore.get().fireMenu(seller);
         }
 
         JOptionPane.showMessageDialog(this,
-                "✅ Pesanan berhasil!\n" + cart.size() + " item dipesan.",
-                "Sukses!", JOptionPane.INFORMATION_MESSAGE);
+                "✅ Order successful!\n" + cart.size() + " item(s) ordered.",
+                "Success!", JOptionPane.INFORMATION_MESSAGE);
         cart.clear();
         updateCartButton();
     }
 
-    // ── Seller list ───────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────
+    // SELLER LIST
+    // ─────────────────────────────────────────────────────────────────────
     private void rebuildSellerList(List<Seller> list) {
+        rebuildSellerList(list, -1, -1);
+    }
+
+    private void rebuildSellerList(List<Seller> list, int maxPrice, int minQty) {
+        this.currentMaxPrice = maxPrice;
+        this.currentMinQty = minQty;
         sellerList.removeAll();
-        list.forEach(s -> {
-            sellerList.add(sellerCard(s));
-            sellerList.add(Box.createVerticalStrut(10));
-        });
+        
+        List<Seller> activeSellers = new ArrayList<>();
+        for (Seller s : list) {
+            if (s.getMenu().isEmpty()) continue;
+            
+            // Filter by price/qty if active
+            boolean match = true;
+            if (maxPrice > 0) {
+                match = s.getMenu().stream().anyMatch(item -> item.getPrice() <= maxPrice);
+            }
+            if (match && minQty > 0) {
+                match = s.getMenu().stream().anyMatch(item -> item.getStock() >= minQty);
+            }
+            
+            if (match) activeSellers.add(s);
+        }
+
+        locLbl.setText("Jakarta • " + activeSellers.size() + " Offers Found");
+
+        if (activeSellers.isEmpty()) {
+            JPanel empty = T.bg();
+            empty.setLayout(new GridBagLayout());
+            JLabel msg = new JLabel("<html><center>No offers yet.<br>Send a request on the left!</center></html>");
+            msg.setFont(T.FH);
+            msg.setForeground(T.GRAY);
+            empty.add(msg);
+            sellerList.add(empty);
+        } else {
+            for (Seller s : activeSellers) {
+                JPanel card = sellerCard(s);
+                sellerList.add(card);
+                sellerList.add(Box.createVerticalStrut(15));
+                T.fade(card); // Smooth entrance
+            }
+        }
         sellerList.revalidate();
         sellerList.repaint();
     }
@@ -402,13 +561,13 @@ public class BuyerWindow extends JFrame {
         meta.setOpaque(false);
 
         double dist = s.distanceTo(buyer.getLat(), buyer.getLng());
-        JLabel dl = new JLabel(String.format("\uD83D\uDCCD %.1f km", dist));
+        JLabel dl = new JLabel(String.format("Dist: %.1f km", dist));
         dl.setFont(T.FS);
         dl.setForeground(T.GRAY);
         JLabel rl = new JLabel(T.stars(s.getRating()) + " " + s.formatRating());
         rl.setFont(T.FS);
         rl.setForeground(T.STAR);
-        JLabel pl = new JLabel("\uD83D\uDCF1 " + s.getPhone());
+        JLabel pl = new JLabel("Phone: " + s.getPhone());
         pl.setFont(T.FS);
         pl.setForeground(T.GRAY);
         meta.add(dl);
@@ -420,33 +579,40 @@ public class BuyerWindow extends JFrame {
         // Buttons
         JPanel btns = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
         btns.setOpaque(false);
-        JButton chatBtn = T.btn("\uD83D\uDCAC Chat");
-        chatBtn.addActionListener(e -> openChat(s));
-
-        JButton vidBtn = T.btn("\uD83C\uDFAC Video", new Color(124, 58, 237), new Color(91, 33, 182));
-        vidBtn.addActionListener(e -> openVideo(s));
-
-        JButton mapBtn2 = T.obtn("\uD83D\uDDFA Peta", T.PINK);
-        mapBtn2.addActionListener(e -> openMap(s.getLat(), s.getLng()));
-
-        btns.add(mapBtn2);
-        btns.add(vidBtn);
-        btns.add(chatBtn);
-        hdr.add(av, BorderLayout.WEST);
+        
+        btns.add(iconBtn(s, "map", T.PINK, "MAP", e -> openSellerMap(s.getLat(), s.getLng())));
+        btns.add(iconBtn(s, "video", new Color(124, 58, 237), "VIDEO", e -> openVideo(s)));
+        btns.add(iconBtn(s, "chat", T.PINK_D, "CHAT", e -> openChat(s)));
+        
+        // Show REVIEW button only if buyer has a DELIVERED order from this seller
+        boolean hasDoneOrder = AppStore.get().getOrdersFor(s.getId()).stream()
+            .anyMatch(o -> o.getBuyerName().equalsIgnoreCase(buyer.getName()) && o.getStatus() == Order.Status.DELIVERED);
+        
+        if (hasDoneOrder) {
+            btns.add(iconBtn(s, "star", T.STAR, "REVIEW", e -> showReviewDialog(s)));
+        }
+        
         hdr.add(info, BorderLayout.CENTER);
         hdr.add(btns, BorderLayout.EAST);
         card.add(hdr, BorderLayout.NORTH);
 
         // Menu grid
-        if (!s.getMenu().isEmpty()) {
-            JPanel grid = new JPanel(new GridLayout(0, 1, 0, 4));
-            grid.setOpaque(false);
-            for (FoodItem item : s.getMenu())
-                grid.add(menuRow(s, item));
-            card.add(grid, BorderLayout.CENTER);
+        JPanel grid = new JPanel(new GridLayout(0, 1, 0, 4));
+        grid.setOpaque(false);
+        for (FoodItem item : s.getMenu()) {
+            // Apply filter to individual items
+            boolean match = true;
+            if (currentMaxPrice > 0 && item.getPrice() > currentMaxPrice) match = false;
+            if (match && currentMinQty > 0 && item.getStock() < currentMinQty) match = false;
+            
+            if (match) grid.add(menuRow(s, item));
         }
+        card.add(grid, BorderLayout.CENTER);
         return card;
     }
+
+    // REMOVED emptyMenuRow to comply with user request for no "strip-strip" placeholders
+    
 
     private JPanel menuRow(Seller seller, FoodItem item) {
         JPanel row = new JPanel(new BorderLayout(8, 0));
@@ -460,13 +626,10 @@ public class BuyerWindow extends JFrame {
                 if (item.getImageIcon() != null) {
                     g2.drawImage(item.getImageIcon().getImage(), 0, 0, 48, 48, null);
                 } else {
-                    g2.setColor(T.PINK_P);
+                    g2.setColor(T.PINK_L);
                     g2.fillRoundRect(0, 0, 48, 48, 8, 8);
-                    g2.setFont(T.f(20, Font.PLAIN));
-                    FontMetrics fm = g2.getFontMetrics();
-                    String em = item.getEmoji();
-                    g2.drawString(em, (48 - fm.stringWidth(em)) / 2,
-                            (48 + fm.getAscent() - fm.getDescent()) / 2);
+                    g2.setColor(T.PINK_B);
+                    T.drawIcon(g2, "food", 12, 12, 24);
                 }
                 g2.dispose();
             }
@@ -474,13 +637,13 @@ public class BuyerWindow extends JFrame {
         thumb.setPreferredSize(new Dimension(48, 48));
         thumb.setOpaque(false);
 
-        JLabel nm = new JLabel(item.getEmoji() + " " + item.getName());
+        JLabel nm = new JLabel(item.getName());
         nm.setFont(T.FB);
         nm.setForeground(T.DARK);
         JLabel pr = new JLabel(item.formatPrice());
         pr.setFont(T.FBO);
         pr.setForeground(T.PINK_D);
-        JLabel stk = new JLabel("Stok: " + item.getStock());
+        JLabel stk = new JLabel("Stock: " + item.getStock());
         stk.setFont(T.FS);
         stk.setForeground(item.getStock() > 0 ? T.GREEN : T.RED);
         SpinnerNumberModel sm = new SpinnerNumberModel(0, 0, Math.max(item.getStock(), 1), 1);
@@ -488,15 +651,18 @@ public class BuyerWindow extends JFrame {
         sp.setFont(T.FS);
         JButton ob = T.btn("Order");
 
-        // Poin 5: Order langsung masuk keranjang
         ob.addActionListener(e -> {
+            if (buyer.getName().isEmpty() || buyer.getAddress().isEmpty()) {
+                JOptionPane.showMessageDialog(this, "Please fill your Profile Name and Address first!", "Profile Required", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
             int qty = (int) sp.getValue();
             if (qty <= 0) {
-                JOptionPane.showMessageDialog(this, "Pilih jumlah dulu!", "Info", JOptionPane.WARNING_MESSAGE);
+                JOptionPane.showMessageDialog(this, "Please select quantity first!", "Info", JOptionPane.WARNING_MESSAGE);
                 return;
             }
 
-            // Tambah ke keranjang
+            // Add to cart
             boolean found = false;
             for (CartItem ci : cart) {
                 if (ci.item == item && ci.seller == seller) {
@@ -511,9 +677,9 @@ public class BuyerWindow extends JFrame {
             updateCartButton();
 
             JOptionPane.showMessageDialog(this,
-                    "🛒 " + item.getName() + " x" + qty + " ditambahkan ke keranjang!\n" +
-                            "Klik tombol 🛒 Keranjang untuk checkout.",
-                    "Ditambahkan", JOptionPane.INFORMATION_MESSAGE);
+                    item.getName() + " x" + qty + " added to cart!\n" +
+                            "Click 🛒 Cart button to checkout.",
+                    "Added", JOptionPane.INFORMATION_MESSAGE);
         });
 
         JPanel info = new JPanel(new GridLayout(1, 4, 8, 0));
@@ -533,67 +699,144 @@ public class BuyerWindow extends JFrame {
         return row;
     }
 
-    // ── Chat ─────────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────
+    // CHAT
+    // ─────────────────────────────────────────────────────────────────────
     private void openChat(Seller s) {
-        activeSellerId = s.getId();
+        activeSellerId = (s == null) ? AppStore.BROADCAST_ID : s.getId();
         chatHolder.removeAll();
 
         JPanel chatWrap = new JPanel(new BorderLayout());
         chatWrap.setOpaque(false);
-        chatWrap.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 6));
 
         JPanel chatHead = new JPanel(new BorderLayout());
         chatHead.setOpaque(false);
         chatHead.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
-        JLabel tl = new JLabel(s.getAvatarEmoji() + " Chat: " + s.getName());
+        
+        String titleText = (s == null) ? "Broadcast Request (To All Sellers)" : "Chat: " + s.getName();
+        JLabel tl = new JLabel(titleText);
         tl.setFont(T.FH);
         tl.setForeground(T.PINK_D);
-        JButton aiToggle = T.btn("\uD83E\uDD16 Aktifkan AI", new Color(124, 58, 237), new Color(91, 33, 182));
+        
+        JButton aiToggle = T.btn("Enable AI", new Color(124, 58, 237), new Color(91, 33, 182));
         chatHead.add(tl, BorderLayout.WEST);
-        chatHead.add(aiToggle, BorderLayout.EAST);
+        if (s != null) chatHead.add(aiToggle, BorderLayout.EAST);
 
-        ChatPanel cp = new ChatPanel(s.getId(), ChatMsg.From.BUYER);
+        ChatPanel cp = new ChatPanel(activeSellerId, ChatMsg.From.BUYER, buyer.getName());
+        if (s == null) {
+            cp.setFilterCallback((maxPrice, minQty) -> {
+                SwingUtilities.invokeLater(() -> rebuildSellerList(AppStore.get().getSellers(), maxPrice, minQty));
+            });
+        }
         final boolean[] aiActive = { false };
         aiToggle.addActionListener(e -> {
             aiActive[0] = !aiActive[0];
             cp.enableAI(aiActive[0]);
-            aiToggle.setText(aiActive[0] ? "\uD83E\uDD16 AI Aktif \u2714" : "\uD83E\uDD16 Aktifkan AI");
+            aiToggle.setText(aiActive[0] ? "AI Active" : "Enable AI");
         });
 
         chatWrap.add(chatHead, BorderLayout.NORTH);
         chatWrap.add(cp, BorderLayout.CENTER);
+
         chatHolder.add(chatWrap, BorderLayout.CENTER);
         chatHolder.revalidate();
         chatHolder.repaint();
     }
 
-    // ── AI dialog ────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────
+    // REVIEWS
+    // ─────────────────────────────────────────────────────────────────────
+    private void showReviewDialog(Seller s) {
+        if (buyer.getName().isEmpty()) {
+            JOptionPane.showMessageDialog(this, "Please save your Name in profile first!", "Required", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        
+        JDialog dlg = new JDialog(this, "Review " + s.getName(), true);
+        dlg.setSize(350, 300);
+        dlg.setLocationRelativeTo(this);
+        
+        JPanel p = T.bg(); p.setLayout(new BorderLayout(10,10));
+        p.setBorder(BorderFactory.createEmptyBorder(15,15,15,15));
+        
+        JLabel ttl = new JLabel("Give your rating for " + s.getName());
+        ttl.setFont(T.FBO); ttl.setForeground(T.PINK_D);
+        p.add(ttl, BorderLayout.NORTH);
+        
+        JPanel mid = new JPanel(new GridLayout(3,1,5,5)); mid.setOpaque(false);
+        
+        JPanel starRow = new JPanel(new FlowLayout(FlowLayout.LEFT)); starRow.setOpaque(false);
+        JSpinner starSpin = new JSpinner(new SpinnerNumberModel(5, 1, 5, 1));
+        starSpin.setFont(T.FB);
+        starRow.add(new JLabel("Rating (1-5 stars):"));
+        starRow.add(starSpin);
+        
+        JTextArea comm = new JTextArea(3, 20);
+        comm.setFont(T.FS);
+        comm.setBorder(BorderFactory.createLineBorder(T.PINK_B));
+        comm.setLineWrap(true);
+        
+        mid.add(starRow);
+        mid.add(new JLabel("Comment:"));
+        mid.add(new JScrollPane(comm));
+        p.add(mid, BorderLayout.CENTER);
+        
+        JButton sub = T.btn("Submit Review");
+        sub.addActionListener(e -> {
+            int rVal = (int) starSpin.getValue();
+            String cText = comm.getText().trim();
+            if (cText.isEmpty()) {
+                JOptionPane.showMessageDialog(dlg, "Please enter a comment!");
+                return;
+            }
+            
+            com.ssn.food.model.Review rev = new com.ssn.food.model.Review(s.getId(), buyer.getName(), rVal, cText);
+            DatabaseManager.get().saveReview(rev);
+            
+            // Refresh seller in memory
+            s.addRating(rVal);
+            AppStore.get().fireReview();
+            
+            JOptionPane.showMessageDialog(this, "Thank you for your review!");
+            dlg.dispose();
+        });
+        p.add(sub, BorderLayout.SOUTH);
+        
+        dlg.setContentPane(p);
+        dlg.setVisible(true);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // AI DIALOG
+    // ─────────────────────────────────────────────────────────────────────
     private void openAIDialog() {
         List<Seller> sellers = AppStore.get().getSellers();
         if (sellers.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "Belum ada seller terdaftar.", "Info", JOptionPane.INFORMATION_MESSAGE);
+            JOptionPane.showMessageDialog(this, "No sellers registered.", "Info", JOptionPane.INFORMATION_MESSAGE);
             return;
         }
         String[] names = sellers.stream().map(Seller::getName).toArray(String[]::new);
         String chosen = (String) JOptionPane.showInputDialog(
-                this, "Pilih seller untuk tanya AI:", "Tanya AI",
+                this, "Select seller to ask AI:", "Ask AI",
                 JOptionPane.QUESTION_MESSAGE, null, names, names[0]);
         if (chosen == null)
             return;
         Seller s = sellers.stream().filter(x -> x.getName().equals(chosen)).findFirst().orElse(null);
         if (s == null)
             return;
-        String q = JOptionPane.showInputDialog(this, "Pertanyaan kamu:");
+        String q = JOptionPane.showInputDialog(this, "Your question:");
         if (q == null || q.trim().isEmpty())
             return;
         AIService.ask(s.getId(), q,
                 r -> SwingUtilities.invokeLater(
-                        () -> JOptionPane.showMessageDialog(this, "🤖 AI: " + r, "Jawaban AI", JOptionPane.INFORMATION_MESSAGE)),
+                        () -> JOptionPane.showMessageDialog(this, "🤖 AI: " + r, "AI Answer", JOptionPane.INFORMATION_MESSAGE)),
                 e -> SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(this, e, "Error",
                         JOptionPane.ERROR_MESSAGE)));
     }
 
-    // ── Sort ─────────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────
+    // SORT METHODS
+    // ─────────────────────────────────────────────────────────────────────
     private void sortByDist() {
         List<Seller> list = new ArrayList<>(AppStore.get().getSellers());
         list.sort(Comparator.comparingDouble(s -> s.distanceTo(buyer.getLat(), buyer.getLng())));
@@ -613,15 +856,17 @@ public class BuyerWindow extends JFrame {
         rebuildSellerList(list);
     }
 
-    // ── History ───────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────
+    // ORDER HISTORY
+    // ─────────────────────────────────────────────────────────────────────
     private void showHistory() {
-        JDialog dlg = new JDialog(this, "\uD83D\uDCB3 Riwayat Pembayaran", true);
+        JDialog dlg = new JDialog(this, "Order History", true);
         dlg.setSize(520, 420);
         dlg.setLocationRelativeTo(this);
         JPanel p = T.bg();
         p.setLayout(new BorderLayout());
         p.setBorder(BorderFactory.createEmptyBorder(14, 14, 14, 14));
-        JLabel ttl = new JLabel("\uD83D\uDCB3 Riwayat Pembayaran");
+        JLabel ttl = new JLabel("Order History");
         ttl.setFont(T.FT);
         ttl.setForeground(T.PINK_D);
         ttl.setBorder(BorderFactory.createEmptyBorder(0, 0, 10, 0));
@@ -636,7 +881,7 @@ public class BuyerWindow extends JFrame {
                 .forEach(mine::add);
 
         if (mine.isEmpty()) {
-            JLabel e = new JLabel("Belum ada pesanan", SwingConstants.CENTER);
+            JLabel e = new JLabel("No orders yet", SwingConstants.CENTER);
             e.setFont(T.FB);
             e.setForeground(T.GRAY);
             list.add(e);
@@ -649,7 +894,7 @@ public class BuyerWindow extends JFrame {
                 row.setAlignmentX(Component.LEFT_ALIGNMENT);
                 JPanel l2 = new JPanel(new BorderLayout(0, 3));
                 l2.setOpaque(false);
-                JLabel id = new JLabel(o.getId() + " \u2022 " + o.getTimestamp());
+                JLabel id = new JLabel(o.getId() + " • " + o.getTimestamp());
                 id.setFont(T.FBO);
                 id.setForeground(T.PINK_D);
                 JLabel sm = new JLabel(o.getSummary());
@@ -677,7 +922,7 @@ public class BuyerWindow extends JFrame {
         JScrollPane sc = new JScrollPane(wrap);
         T.scrollFix(sc);
         p.add(sc, BorderLayout.CENTER);
-        JButton close = T.btn("Tutup");
+        JButton close = T.btn("Close");
         close.addActionListener(e -> dlg.dispose());
         JPanel bp = new JPanel(new FlowLayout(FlowLayout.CENTER));
         bp.setOpaque(false);
@@ -687,13 +932,15 @@ public class BuyerWindow extends JFrame {
         dlg.setVisible(true);
     }
 
-    // Poin 3: Video langsung ke YouTube
+    // ─────────────────────────────────────────────────────────────────────
+    // VIDEO (YOUTUBE)
+    // ─────────────────────────────────────────────────────────────────────
     private void openVideo(Seller s) {
         String url = s.getVideoUrl();
         if (url == null || url.trim().isEmpty()) {
             JOptionPane.showMessageDialog(this,
-                    "📹 Seller belum menyediakan video promo.\nSilakan cek kembali nanti.",
-                    "Video Tidak Tersedia",
+                    "Seller hasn't uploaded a promo video.\nPlease check again later.",
+                    "Video Not Available",
                     JOptionPane.INFORMATION_MESSAGE);
             return;
         }
@@ -704,7 +951,7 @@ public class BuyerWindow extends JFrame {
             Desktop.getDesktop().browse(new URI(url));
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this,
-                    "❌ Gagal membuka video: " + ex.getMessage(),
+                    "❌ Failed to open video: " + ex.getMessage(),
                     "Error",
                     JOptionPane.ERROR_MESSAGE);
         }
@@ -740,11 +987,46 @@ public class BuyerWindow extends JFrame {
         return url;
     }
 
-    private void openMap(double lat, double lng) {
+    // ─────────────────────────────────────────────────────────────────────
+    // GOOGLE MAPS (BUYER & SELLER)
+    // ─────────────────────────────────────────────────────────────────────
+
+
+    // Helper for circular icon buttons with labels
+    private JPanel iconBtn(Seller s, String type, Color bg, String label, java.awt.event.ActionListener al) {
+        JPanel p = new JPanel(new BorderLayout(0, 2));
+        p.setOpaque(false);
+        JButton b = new JButton() {
+            public void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(bg); g2.fillOval(0, 0, getWidth(), getHeight());
+                g2.setColor(Color.WHITE); T.drawIcon(g2, type, 8, 8, 14);
+                g2.dispose();
+            }
+        };
+        b.setPreferredSize(new Dimension(30, 30)); b.setBorder(null);
+        b.setContentAreaFilled(false); b.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        b.addActionListener(al);
+        b.setToolTipText(label);
+
+        JLabel l = new JLabel(label, SwingConstants.CENTER);
+        l.setFont(T.f(8, Font.BOLD)); l.setForeground(T.GRAY);
+        p.add(b, BorderLayout.CENTER);
+        p.add(l, BorderLayout.SOUTH);
+        return p;
+    }
+
+    // Open map for Seller's location
+    private void openSellerMap(double lat, double lng) {
         try {
-            Desktop.getDesktop().browse(new URI("https://maps.google.com/?q=" + lat + "," + lng));
+            String mapsUrl = "https://www.google.com/maps/search/?api=1&query=" + lat + "," + lng;
+            Desktop.getDesktop().browse(new URI(mapsUrl));
         } catch (Exception ex) {
             ex.printStackTrace();
+            JOptionPane.showMessageDialog(this,
+                    "Failed to open seller location: " + ex.getMessage(),
+                    "Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 }

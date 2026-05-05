@@ -1,11 +1,13 @@
 package com.ssn.food.model;
 
 public class FoodItem {
-    private final String id;  // ← ditambah final
+    private String id;
     private String name, emoji, videoUrl = "", description = "";
     private long price;
     private int stock;
     private javax.swing.ImageIcon imageIcon = null;
+
+    public void setId(String id) { this.id = id; }
 
     public FoodItem(String id, String name, long price, int stock, String emoji) {
         this.id = id; this.name = name; this.price = price;
@@ -29,6 +31,6 @@ public class FoodItem {
     public void   setImageIcon(javax.swing.ImageIcon i){ this.imageIcon = i; }
     public String formatPrice()     { return "Rp " + String.format("%,d", price).replace(',','.'); }
     
-    @Override  // ← ditambah @Override
+    @Override
     public String toString()        { return emoji + " " + name + " - " + formatPrice(); }
 }

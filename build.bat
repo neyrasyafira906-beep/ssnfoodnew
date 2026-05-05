@@ -4,11 +4,17 @@ echo   SSN FoodApp - Build
 echo =========================================
 if not exist out mkdir out
 echo [1] Mengumpulkan file Java...
-dir /s /b src\main\java\*.java > sources.txt
+if exist sources.txt del sources.txt
+dir /s /b src\main\java\*.java > sources_tmp.txt
+powershell -Command "(gc sources_tmp.txt) | ForEach-Object { '\"' + $_.Replace('\', '/') + '\"' } | Out-File -encoding ASCII sources.txt"
+del sources_tmp.txt
+
 echo [2] Kompilasi...
-javac -d out -encoding UTF-8 --release 11 @sources.txt
+javac -d out -cp ".;lib/*" src/main/java/com/ssn/food/App.java src/main/java/com/ssn/food/model/*.java src/main/java/com/ssn/food/service/*.java src/main/java/com/ssn/food/ui/*.java
 if %ERRORLEVEL% NEQ 0 ( echo [ERROR] Kompilasi gagal! & pause & exit /b 1 )
 echo [3] Membuat JAR...
+echo Main-Class: com.ssn.food.App > manifest.txt
+echo Class-Path: . lib/mysql-connector-j-9.7.0.jar >> manifest.txt
 jar cfm foodapp.jar manifest.txt -C out .
 if %ERRORLEVEL% NEQ 0 ( echo [ERROR] Gagal buat JAR! & pause & exit /b 1 )
 echo.

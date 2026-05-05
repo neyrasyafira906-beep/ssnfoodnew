@@ -14,5 +14,5 @@ public class Buyer {
     public void   setLat(double l)     { this.lat = l; }
     public double getLng()             { return lng; }
     public void   setLng(double l)     { this.lng = l; }
-    public String getDisplayName()     { return name.isEmpty() ? "Pembeli" : name; }
+    public String getDisplayName()     { return name.isEmpty() ? "Buyer" : name; }
 }
