@@ -718,8 +718,18 @@ public class BuyerWindow extends JFrame {
         tl.setFont(T.FH);
         tl.setForeground(T.PINK_D);
         
+        JPanel titlePanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
+        titlePanel.setOpaque(false);
+        if (s != null) {
+            JButton backBtn = T.obtn("◀ Back", T.PINK_D);
+            backBtn.setPreferredSize(new Dimension(80, 25));
+            backBtn.addActionListener(e -> openChat(null));
+            titlePanel.add(backBtn);
+        }
+        titlePanel.add(tl);
+        
         JButton aiToggle = T.btn("Enable AI", new Color(124, 58, 237), new Color(91, 33, 182));
-        chatHead.add(tl, BorderLayout.WEST);
+        chatHead.add(titlePanel, BorderLayout.WEST);
         if (s != null) chatHead.add(aiToggle, BorderLayout.EAST);
 
         ChatPanel cp = new ChatPanel(activeSellerId, ChatMsg.From.BUYER, buyer.getName());
@@ -824,14 +834,25 @@ public class BuyerWindow extends JFrame {
         Seller s = sellers.stream().filter(x -> x.getName().equals(chosen)).findFirst().orElse(null);
         if (s == null)
             return;
-        String q = JOptionPane.showInputDialog(this, "Your question:");
-        if (q == null || q.trim().isEmpty())
-            return;
-        AIService.ask(s.getId(), q,
-                r -> SwingUtilities.invokeLater(
-                        () -> JOptionPane.showMessageDialog(this, "🤖 AI: " + r, "AI Answer", JOptionPane.INFORMATION_MESSAGE)),
-                e -> SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(this, e, "Error",
-                        JOptionPane.ERROR_MESSAGE)));
+
+        JDialog aiRoom = new JDialog(this, "AI Roomchat - " + s.getName(), false);
+        aiRoom.setSize(450, 600);
+        aiRoom.setLocationRelativeTo(this);
+        
+        JPanel p = T.bg();
+        p.setLayout(new BorderLayout());
+        
+        JLabel ttl = new JLabel("🤖 AI Online Roomchat: " + s.getName());
+        ttl.setFont(T.FBO); ttl.setForeground(T.PINK_D);
+        ttl.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+        p.add(ttl, BorderLayout.NORTH);
+
+        ChatPanel cp = new ChatPanel(s.getId(), ChatMsg.From.BUYER, buyer.getName());
+        cp.enableAI(true);
+        p.add(cp, BorderLayout.CENTER);
+        
+        aiRoom.setContentPane(p);
+        aiRoom.setVisible(true);
     }
 
     // ─────────────────────────────────────────────────────────────────────

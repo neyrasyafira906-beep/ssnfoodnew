@@ -10,9 +10,8 @@ powershell -Command "(gc sources_tmp.txt) | ForEach-Object { '\"' + $_.Replace('
 del sources_tmp.txt
 
 echo [2] Kompilasi...
-javac -d out -cp ".;lib/*" src/main/java/com/ssn/food/App.java src/main/java/com/ssn/food/model/*.java src/main/java/com/ssn/food/service/*.java src/main/java/com/ssn/food/ui/*.java
+javac -encoding UTF-8 -d out -cp ".;lib/*" src/main/java/com/ssn/food/App.java src/main/java/com/ssn/food/model/*.java src/main/java/com/ssn/food/service/*.java src/main/java/com/ssn/food/ui/*.java
 if %ERRORLEVEL% NEQ 0 ( echo [ERROR] Kompilasi gagal! & pause & exit /b 1 )
-echo [3] Membuat JAR...
 echo Main-Class: com.ssn.food.App > manifest.txt
 echo Class-Path: . lib/mysql-connector-j-9.7.0.jar >> manifest.txt
 jar cfm foodapp.jar manifest.txt -C out .

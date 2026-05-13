@@ -148,43 +148,61 @@ public class ChatPanel extends JPanel {
                 return;
             }
 
+            // Clear chat command
+            if (lowerT.equals("clear chat")) {
+                AppStore.get().getChat(sellerId).clear();
+                refresh();
+                return;
+            }
+
             // Filter cheapest menu
             if (lowerT.contains("cheap") || lowerT.contains("cheapest") || lowerT.contains("murah")) {
+                List<FoodItem> allItems = new ArrayList<>();
+                if (AppStore.BROADCAST_ID.equals(sellerId)) {
+                    AppStore.get().getSellers().forEach(s -> allItems.addAll(s.getMenu()));
+                } else {
+                    Seller seller = AppStore.get().findSeller(sellerId);
+                    if (seller != null) allItems.addAll(seller.getMenu());
+                }
 
-                Seller seller = AppStore.get().findSeller(sellerId);
-                if (seller != null && !seller.getMenu().isEmpty()) {
-                    List<FoodItem> sorted = new ArrayList<>(seller.getMenu());
-                    sorted.sort(Comparator.comparingLong(FoodItem::getPrice));
-
+                if (!allItems.isEmpty()) {
+                    allItems.sort(Comparator.comparingLong(FoodItem::getPrice));
                     StringBuilder sb = new StringBuilder("Cheapest menu:\n");
-                    for (FoodItem item : sorted) {
+                    for (int i = 0; i < Math.min(5, allItems.size()); i++) {
+                        FoodItem item = allItems.get(i);
                         sb.append("  • ").append(item.getEmoji()).append(" ")
                                 .append(item.getName()).append(" - ")
                                 .append(item.formatPrice()).append("\n");
                     }
                     AppStore.get().sendChat(sellerId, new ChatMsg(ChatMsg.From.SYSTEM, sb.toString()));
                 } else {
-                    AppStore.get().sendChat(sellerId,
-                            new ChatMsg(ChatMsg.From.SYSTEM, "No menu available."));
+                    AppStore.get().sendChat(sellerId, new ChatMsg(ChatMsg.From.SYSTEM, "No menu available."));
                 }
                 return;
             }
 
             // Filter most expensive menu
             if (lowerT.contains("expensive") || lowerT.contains("most expensive") || lowerT.contains("mahal")) {
-                Seller seller = AppStore.get().findSeller(sellerId);
-                if (seller != null && !seller.getMenu().isEmpty()) {
-                    List<FoodItem> sorted = new ArrayList<>(seller.getMenu());
-                    sorted.sort((a, b) -> Long.compare(b.getPrice(), a.getPrice()));
+                List<FoodItem> allItems = new ArrayList<>();
+                if (AppStore.BROADCAST_ID.equals(sellerId)) {
+                    AppStore.get().getSellers().forEach(s -> allItems.addAll(s.getMenu()));
+                } else {
+                    Seller seller = AppStore.get().findSeller(sellerId);
+                    if (seller != null) allItems.addAll(seller.getMenu());
+                }
 
+                if (!allItems.isEmpty()) {
+                    allItems.sort((a, b) -> Long.compare(b.getPrice(), a.getPrice()));
                     StringBuilder sb = new StringBuilder("Most expensive menu:\n");
-                    for (int i = 0; i < Math.min(3, sorted.size()); i++) {
-                        FoodItem item = sorted.get(i);
+                    for (int i = 0; i < Math.min(3, allItems.size()); i++) {
+                        FoodItem item = allItems.get(i);
                         sb.append("  • ").append(item.getEmoji()).append(" ")
                                 .append(item.getName()).append(" - ")
                                 .append(item.formatPrice()).append("\n");
                     }
                     AppStore.get().sendChat(sellerId, new ChatMsg(ChatMsg.From.SYSTEM, sb.toString()));
+                } else {
+                    AppStore.get().sendChat(sellerId, new ChatMsg(ChatMsg.From.SYSTEM, "No menu available."));
                 }
                 return;
             }
@@ -222,8 +240,21 @@ public class ChatPanel extends JPanel {
 
         sendBtn.addActionListener(e -> send.run());
         inp.addActionListener(e -> send.run());
+        
+        JButton clearBtn = T.obtn("Clear", T.PINK);
+        clearBtn.setPreferredSize(new Dimension(65, 35));
+        clearBtn.addActionListener(e -> {
+            AppStore.get().clearChat(sellerId);
+            refresh();
+        });
+        
+        JPanel btnWrap = new JPanel(new FlowLayout(FlowLayout.RIGHT, 5, 0));
+        btnWrap.setOpaque(false);
+        btnWrap.add(clearBtn);
+        btnWrap.add(sendBtn);
+
         row.add(inp, BorderLayout.CENTER);
-        row.add(sendBtn, BorderLayout.EAST);
+        row.add(btnWrap, BorderLayout.EAST);
         add(row, BorderLayout.SOUTH);
 
         refresh();

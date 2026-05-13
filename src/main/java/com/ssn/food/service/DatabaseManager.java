@@ -150,6 +150,17 @@ public class DatabaseManager {
         }
     }
 
+    public void clearChats(String contextId) {
+        if (!isConnected()) return;
+        try (PreparedStatement ps = conn.prepareStatement("DELETE FROM chat_messages WHERE context_id=?")) {
+            ps.setString(1, contextId);
+            ps.executeUpdate();
+            System.out.println("🗑️ Chat Cleared from DB: " + contextId);
+        } catch (SQLException e) {
+            System.err.println("❌ Failed to clear chat: " + e.getMessage());
+        }
+    }
+
     // --- ORDERS ---
     public void saveOrder(Order o) {
         if (!isConnected()) return;

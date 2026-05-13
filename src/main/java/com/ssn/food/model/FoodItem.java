@@ -9,6 +9,7 @@ public class FoodItem {
 
     public void setId(String id) { this.id = id; }
 
+    //overloading
     public FoodItem(String id, String name, long price, int stock, String emoji) {
         this.id = id; this.name = name; this.price = price;
         this.stock = stock; this.emoji = emoji;

@@ -141,6 +141,13 @@ public class AppStore {
         chatCbs.forEach(cb -> cb.accept(m));
     }
 
+    public void clearChat(String sid) {
+        if (chats.containsKey(sid)) {
+            chats.get(sid).clear();
+        }
+        DatabaseManager.get().clearChats(sid);
+    }
+
     public void onChat(Consumer<ChatMsg> cb) { chatCbs.add(cb); }
 
     public void onMenu(Consumer<Seller> cb)  { menuCbs.add(cb); }
